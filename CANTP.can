@@ -1,0 +1,92 @@
+/*@!Encoding:1252*/
+
+variables {
+  // Frame types and Flow Status
+  const byte FRAME_SF = 0x00;  // Single Frame
+  const byte FRAME_FF = 0x10;  // First Frame
+  const byte FRAME_CF = 0x20;  // Consecutive Frame
+  const byte FRAME_FC = 0x30;  // Flow Control Frame
+  const byte FC_CTS = 0x00;    // Continue to Send
+  const byte FC_WAIT = 0x01;   // Wait
+  const byte FC_OVF = 0x02;    // Overflow
+
+  // Timer durations (ms)
+  const dword N_AS_TIMEOUT = 1000;
+  const dword N_BS_TIMEOUT = 1000;
+
+  // Configuration
+  const byte BS = 8;           // Block Size
+  const byte STMIN = 50;       // Separation Time (ms)
+  const byte PADDING = 0xCC;   // Padding value
+
+  // Buffers and state
+  byte tx_buffer[4095];
+  byte rx_buffer[4095];
+  dword tx_length;
+  dword rx_length;
+  byte seq_num;
+  message 0x123 msg;
+}
+
+// Initialize CAN-TP
+void cantp_init() {
+  tx_length = 0;
+  rx_length = 0;
+  seq_num = 1;
+}
+
+// Send Single Frame
+void cantp_send_sf(byte data[], dword length) {
+  byte i;
+  msg.dlc = 8;
+  msg.byte(0) = FRAME_SF | (length & 0x0F);
+  for (i = 0; i < length; i++) {
+    msg.byte(i + 1) = data[i];
+  }
+  for (i = length + 1; i < 8; i++) {
+    msg.byte(i) = PADDING;
+  }
+  output(msg);
+}
+
+// Send First Frame
+void cantp_send_ff(byte data[], dword length) {
+  byte i;
+  msg.dlc = 8;
+  msg.byte(0) = FRAME_FF | ((length >> 8) & 0x0F);
+  msg.byte(1) = length & 0xFF;
+  for (i = 0; i < 6; i++) {
+    msg.byte(i + 2) = data[i];
+  }
+  for (i = 6; i < 8; i++) {
+    msg.byte(i) = PADDING;
+  }
+  output(msg);
+}
+
+// Send Consecutive Frame
+void cantp_send_cf(byte data[], dword offset, byte seq) {
+  byte i, len;
+  len = (tx_length - offset > 7) ? 7 : (tx_length - offset);
+  msg.dlc = 8;
+  msg.byte(0) = FRAME_CF | (seq & 0x0F);
+  for (i = 0; i < len; i++) {
+    msg.byte(i + 1) = data[offset + i];
+  }
+  for (i = len + 1; i < 8; i++) {
+    msg.byte(i) = PADDING;
+  }
+}
+
+// Send Flow Control Frame
+void cantp_send_fc(byte fs, byte bs, byte stmin) {
+  byte i;
+  msg.dlc = 8;
+  msg.byte(0) = FRAME_FC | (fs & 0x0F);
+  msg.byte(1) = bs;
+  msg.byte(2) = stmin;
+  for (i = 3; i < 8; i++) {
+    msg.byte(i) = PADDING;
+  }
+  output(msg);
+}

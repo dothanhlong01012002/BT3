@@ -1,0 +1,56 @@
+/*@!Encoding:1252*/
+includes
+{
+  #include "cantp.can"
+}
+
+variables
+{
+  message 0x456 rx_msg;
+}
+
+on start
+{
+  cantp_init();
+  write("Receiver ECU2 initialized");
+}
+
+//on message 0x123
+//{
+//  byte frame_type = this.byte(0) >> 4;
+//  byte i;
+//  
+//  if (frame_type == FRAME_SF) {
+//    rx_length = this.byte(0) & 0x0F;
+//    for (i = 0; i < rx_length; i++) {
+//      rx_buffer[i] = this.byte(i + 1);
+//    }
+//    write("ECU2: Received SF, %d bytes", rx_length);
+//  } else if (frame_type == FRAME_FF) {
+//    rx_length = ((this.byte(0) & 0x0F) << 8) | this.byte(1);
+//    for (i = 0; i < 6; i++) {
+//      rx_buffer[i] = this.byte(i + 2);
+//    }
+//    cantp_send_fc(0x456, FC_CTS, BS, STMIN);
+//    write("ECU2: Received FF, total %d bytes", rx_length);
+//  } else if (frame_type == FRAME_CF) {
+//    byte seq = this.byte(0) & 0x0F;
+//    if (seq != seq_num) {
+//      write("ECU2: Invalid sequence number %d, expected %d", seq, seq_num);
+//      cantp_init();
+//      return;
+//    }
+//    dword offset = 6 + (seq - 1) * 7;
+//    byte len = (rx_length - offset > 7) ? 7 : (rx_length - offset);
+//    for (i = 0; i < len; i++) {
+//      rx_buffer[offset + i] = this.byte(i + 1);
+//    }
+//    seq_num = (seq_num + 1) % 16;
+//    if (offset + len >= rx_length) {
+//      write("ECU2: Received all CFs, total %d bytes", rx_length);
+//      cantp_init();
+//    } else if ((seq % BS) == 0) {
+//      cantp_send_fc(0x456, FC_CTS, BS, STMIN);
+//    }
+//  }
+//}

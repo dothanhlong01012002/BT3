@@ -1,0 +1,75 @@
+/*@!Encoding:1252*/
+includes
+{
+  #include "CANTP.can"
+}
+
+variables
+{
+  message 0x123 tx_msg;
+}
+
+on start
+{
+  cantp_init();
+  write("Sender ECU1 initialized");
+}
+
+on key 's'
+{
+  byte i;
+  byte test_data[10] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA};
+  tx_length = 10;
+  for (i = 0; i < tx_length; i++) {
+    tx_buffer[i] = test_data[i];
+  }
+  
+  if (tx_length <= 7) {
+    cantp_send_sf(tx_buffer, tx_length);
+  } else {
+    cantp_send_ff(tx_buffer, tx_length);
+  }
+  write("ECU1 sent %d bytes", tx_length);
+}
+
+//
+//on message 0x456
+//{
+//  // Handle Flow Control Frame from Receiver
+//  if (this.byte(0) >> 4 == FRAME_FC) {
+//    byte fs = this.byte(0) & 0x0F;
+//    byte bs = this.byte(1);
+//    byte stmin = this.byte(2);
+//    
+//    if (fs == FC_CTS) {
+//      dword offset = 6;
+//      seq_num = 1;
+//      while (offset < tx_length) {
+//        cantp_send_cf(0x123, tx_buffer, offset, seq_num);
+//        offset += 7;
+//        seq_num = (seq_num + 1) % 16;
+//        // Respect STmin (simplified delay)
+//        if (stmin > 0) {
+//          setTimer(t_NAs, stmin);
+//        }
+//      }
+//    } else if (fs == FC_WAIT) {
+//      write("ECU1: Receiver requested wait");
+//    } else if (fs == FC_OVF) {
+//      write("ECU1: Receiver overflow");
+//      cantp_init(); // Reset
+//    }
+//  }
+//}
+//
+//on timer t_NAs
+//{
+//  write("ECU1: N_As timeout");
+//  cantp_init();
+//}
+//
+//on timer t_NBs
+//{
+//  write("ECU1: N_Bs timeout (no FC received)");
+//  cantp_init();
+//}
