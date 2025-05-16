@@ -11,18 +11,17 @@ variables {
   const byte FC_OVF = 0x02;    // Overflow
 
   // Configuration
-  byte BS = 8;           // Block Size
-  byte STMIN = 50;       // Separation Time (ms)
+  byte BS;           // Block Size
+  byte STMIN;       // Separation Time (ms)
   byte PADDING = 0xCC;   // Padding value
-  byte FS = 0;           // Flow Status
+  byte FS;           // Flow Status
 
   // Buffers and state
   byte tx_buffer[4095];
   byte rx_buffer[4095];
-  dword tx_length = 10;
+  dword tx_length;
   dword rx_length;
   byte seq_num;
-  byte Fc_Counter;
   
   //timer
   timer stmin;
@@ -122,7 +121,6 @@ void cantp_handle_ff(message *Rxmsgx,message *Txmsgx)
   for (i = 0; i < 6; i++) {
     rx_buffer[i] = Rxmsgx.byte(i + 2);
   }
-  Fc_Counter = 0;
   cantp_send_fc(Txmsgx, FC_CTS, BS, STMIN);
   write("ECU2: Received FF, total %d bytes", rx_length);
 }
@@ -149,7 +147,6 @@ void cantp_handle_cf(message *Rxmsgx,message *Txmsgx)
     cantp_init();
   } else if ((seq % BS) == 0) {
     cantp_send_fc(Txmsgx, FC_CTS, BS, STMIN);
-    Fc_Counter = 0;
   }
 }
 
@@ -165,13 +162,9 @@ void cantp_handle_fc(message *Rxmsgx,message *Txmsgx)
     dword offset = 6;
     seq_num = 1;
     while (offset < tx_length) {
-      if (Fc_Counter < BS)
-      {
-        cantp_send_cf(Txmsgx, tx_buffer, offset, seq_num);
-        offset += 7;
-        seq_num = (seq_num + 1) % 16;
-        Fc_Counter += 1;
-      }
+      cantp_send_cf(Txmsgx, tx_buffer, offset, seq_num);
+      offset += 7;
+      seq_num = (seq_num + 1) % 16;
     }
   } else if (fs == FC_WAIT) {
     write("ECU1: Receiver requested wait");
