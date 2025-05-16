@@ -10,23 +10,22 @@ variables {
   const byte FC_WAIT = 0x01;   // Wait
   const byte FC_OVF = 0x02;    // Overflow
 
-  // Timer durations (ms)
-  const dword N_AS_TIMEOUT = 1000;
-  const dword N_BS_TIMEOUT = 1000;
-
   // Configuration
-  const byte BS = 8;           // Block Size
-  const byte STMIN = 50;       // Separation Time (ms)
-  const byte PADDING = 0xCC;   // Padding value
+  byte BS = 8;           // Block Size
+  byte STMIN = 50;       // Separation Time (ms)
+  byte PADDING = 0xCC;   // Padding value
+  byte FS = 0;           // Flow Status
 
   // Buffers and state
   byte tx_buffer[4095];
   byte rx_buffer[4095];
-  dword tx_length;
+  dword tx_length = 10;
   dword rx_length;
   byte seq_num;
-  message 0x123 msg;
-  message 0x456 msg2;
+  byte Fc_Counter;
+  
+  //timer
+  timer stmin;
 }
 
 // Initialize CAN-TP
@@ -35,59 +34,154 @@ void cantp_init() {
   rx_length = 0;
   seq_num = 1;
 }
+on sysvar tx_length
+{
+  tx_length = @sysvar::tx_length;
+}
+on sysvar BS
+{
+  BS = @sysvar::BS;
+}
+on sysvar STmin
+{
+  STMIN = @sysvar::STmin;
+}
+on sysvar FS
+{
+  FS = @sysvar::FS;
+}
 
 // Send Single Frame
-void cantp_send_sf(byte data[], dword length) {
+void cantp_send_sf(message *Txmsgx, byte data[], dword length) {
   byte i;
-  msg.dlc = 8;
-  msg.byte(0) = FRAME_SF | (length & 0x0F);
+  Txmsgx.dlc = 8;
+  Txmsgx.byte(0) = FRAME_SF | (length & 0x0F);
   for (i = 0; i < length; i++) {
-    msg.byte(i + 1) = data[i];
+    Txmsgx.byte(i + 1) = data[i];
   }
   for (i = length + 1; i < 8; i++) {
-    msg.byte(i) = PADDING;
+    Txmsgx.byte(i) = PADDING;
   }
-  output(msg);
+  output(Txmsgx);
 }
 
 // Send First Frame
-void cantp_send_ff(byte data[], dword length) {
+void cantp_send_ff(message *Txmsgx, byte data[], dword length) {
   byte i;
-  msg.dlc = 8;
-  msg.byte(0) = FRAME_FF | ((length >> 8) & 0x0F);
-  msg.byte(1) = length & 0xFF;
+  Txmsgx.dlc = 8;
+  Txmsgx.byte(0) = FRAME_FF | ((length >> 8) & 0x0F);
+  Txmsgx.byte(1) = length & 0xFF;
   for (i = 0; i < 6; i++) {
-    msg.byte(i + 2) = data[i];
+    Txmsgx.byte(i + 2) = data[i];
   }
-  for (i = 6; i < 8; i++) {
-    msg.byte(i) = PADDING;
-  }
-  output(msg);
+  output(Txmsgx);
 }
 
 // Send Consecutive Frame
-void cantp_send_cf(byte data[], dword offset, byte seq) {
+void cantp_send_cf(message *Txmsgx, byte data[], dword offset, byte seq) {
   byte i, len;
   len = (tx_length - offset > 7) ? 7 : (tx_length - offset);
-  msg.dlc = 8;
-  msg.byte(0) = FRAME_CF | (seq & 0x0F);
+  Txmsgx.dlc = 8;
+  Txmsgx.byte(0) = FRAME_CF | (seq & 0x0F);
   for (i = 0; i < len; i++) {
-    msg.byte(i + 1) = data[offset + i];
+    Txmsgx.byte(i + 1) = data[offset + i];
   }
   for (i = len + 1; i < 8; i++) {
-    msg.byte(i) = PADDING;
+    Txmsgx.byte(i) = PADDING;
   }
+  output(Txmsgx);
 }
 
 // Send Flow Control Frame
-void cantp_send_fc(byte fs, byte bs, byte stmin) {
+void cantp_send_fc(message *Txmsgx,byte fs, byte bs, byte stmin) {
   byte i;
-  msg2.dlc = 8;
-  msg2.byte(0) = FRAME_FC | (fs & 0x0F);
-  msg2.byte(1) = bs;
-  msg2.byte(2) = stmin;
+  Txmsgx.dlc = 8;
+  Txmsgx.byte(0) = FRAME_FC | (fs & 0x0F);
+  Txmsgx.byte(1) = bs;
+  Txmsgx.byte(2) = stmin;
   for (i = 3; i < 8; i++) {
-    msg2.byte(i) = PADDING;
+    Txmsgx.byte(i) = PADDING;
   }
-  output(msg2);
+  output(Txmsgx);
+}
+
+void cantp_handle_sf(message *Rxmsgx)
+{
+    byte i;
+    rx_length = Rxmsgx.byte(0) & 0x0F;
+    for (i = 0; i < rx_length; i++) {
+      rx_buffer[i] = Rxmsgx.byte(i + 1);
+    }
+    write("ECU2: Received SF, %d bytes", rx_length);
+}
+
+void cantp_handle_ff(message *Rxmsgx,message *Txmsgx)
+{
+  byte i;
+  rx_length = ((Rxmsgx.byte(0) & 0x0F) << 8) | Rxmsgx.byte(1);
+  for (i = 0; i < 6; i++) {
+    rx_buffer[i] = Rxmsgx.byte(i + 2);
+  }
+  Fc_Counter = 0;
+  cantp_send_fc(Txmsgx, FC_CTS, BS, STMIN);
+  write("ECU2: Received FF, total %d bytes", rx_length);
+}
+
+void cantp_handle_cf(message *Rxmsgx,message *Txmsgx)
+{
+  dword offset;
+  byte seq,i,len;
+  
+  seq = Rxmsgx.byte(0) & 0x0F;
+  if (seq != seq_num) {
+    write("ECU2: Invalid sequence number %d, expected %d", seq, seq_num);
+    cantp_init();
+    return;
+  }
+  offset = 6 + (seq - 1) * 7;
+  len = (rx_length - offset > 7) ? 7 : (rx_length - offset);
+  for (i = 0; i < len; i++) {
+    rx_buffer[offset + i] = Rxmsgx.byte(i + 1);
+  }
+  seq_num = (seq_num + 1) % 16;
+  if (offset + len >= rx_length) {
+    write("ECU2: Received all CFs, total %d bytes", rx_length);
+    cantp_init();
+  } else if ((seq % BS) == 0) {
+    cantp_send_fc(Txmsgx, FC_CTS, BS, STMIN);
+    Fc_Counter = 0;
+  }
+}
+
+void cantp_handle_fc(message *Rxmsgx,message *Txmsgx)
+{
+  byte fs,bs,stmin;
+  
+  fs = Rxmsgx.byte(0) & 0x0F;
+  bs = Rxmsgx.byte(1);
+  stmin = Rxmsgx.byte(2);
+  
+  if (fs == FC_CTS) {
+    dword offset = 6;
+    seq_num = 1;
+    while (offset < tx_length) {
+      if (Fc_Counter < BS)
+      {
+        cantp_send_cf(Txmsgx, tx_buffer, offset, seq_num);
+        offset += 7;
+        seq_num = (seq_num + 1) % 16;
+        Fc_Counter += 1;
+      }
+    }
+  } else if (fs == FC_WAIT) {
+    write("ECU1: Receiver requested wait");
+  } else if (fs == FC_OVF) {
+    write("ECU1: Receiver overflow");
+    cantp_init(); // Reset
+  }
+}
+
+on timer stmin
+{
+  
 }

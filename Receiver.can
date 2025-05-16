@@ -6,7 +6,8 @@ includes
 
 variables
 {
-  message 0x456 rx_msg;
+  message 0x456 MsgID456;
+  message 0x123 RxMsg;
 }
 
 on start
@@ -17,42 +18,18 @@ on start
 
 on message 0x123
 {
-  dword offset;
-  byte i,len,seq;
-  byte frame_type;
-  frame_type = this.byte(0) >> 4;
+  RxMsg = this;
   
-  if (frame_type == FRAME_SF) {
-    rx_length = this.byte(0) & 0x0F;
-    for (i = 0; i < rx_length; i++) {
-      rx_buffer[i] = this.byte(i + 1);
-    }
-    write("ECU2: Received SF, %d bytes", rx_length);
-    } else if (frame_type == FRAME_FF) {
-    rx_length = ((this.byte(0) & 0x0F) << 8) | this.byte(1);
-    for (i = 0; i < 6; i++) {
-      rx_buffer[i] = this.byte(i + 2);
-    }
-    cantp_send_fc(FC_CTS, BS, STMIN);
-    write("ECU2: Received FF, total %d bytes", rx_length);
-    } else if (frame_type == FRAME_CF) {
-    seq = this.byte(0) & 0x0F;
-    if (seq != seq_num) {
-      write("ECU2: Invalid sequence number %d, expected %d", seq, seq_num);
-      cantp_init();
-      return;
-    }
-    offset = 6 + (seq - 1) * 7;
-    len = (rx_length - offset > 7) ? 7 : (rx_length - offset);
-    for (i = 0; i < len; i++) {
-      rx_buffer[offset + i] = this.byte(i + 1);
-    }
-    seq_num = (seq_num + 1) % 16;
-    if (offset + len >= rx_length) {
-      write("ECU2: Received all CFs, total %d bytes", rx_length);
-      cantp_init();
-    } else if ((seq % BS) == 0) {
-      cantp_send_fc(FC_CTS, BS, STMIN);
-    }
+  if ((RxMsg.byte(0) & 0xF0) == FRAME_SF) {
+    cantp_handle_sf(RxMsg);
+  } 
+  else if ((RxMsg.byte(0) & 0xF0) == FRAME_FF) {
+    cantp_handle_ff(RxMsg,MsgID456);
+  } 
+  else if ((RxMsg.byte(0) & 0xF0) == FRAME_CF) {
+    cantp_handle_cf(RxMsg,MsgID456);
+  }
+  else if ((RxMsg.byte(0) & 0xF0) == FRAME_FC) {
+    cantp_handle_fc(RxMsg,MsgID456);
   }
 }

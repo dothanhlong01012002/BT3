@@ -6,7 +6,8 @@ includes
 
 variables
 {
-  message 0x123 tx_msg;
+  message 0x123 MsgID123;
+  message 0x456 RxMsg;
 }
 
 on start
@@ -18,53 +19,32 @@ on start
 on key 's'
 {
   byte i;
-  byte test_data[10] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA};
-  tx_length = 10;
   for (i = 0; i < tx_length; i++) {
-    tx_buffer[i] = test_data[i];
+    tx_buffer[i] = i + 1;
   }
   
   if (tx_length <= 7) {
-    cantp_send_sf(tx_buffer, tx_length);
+    cantp_send_sf(MsgID123, tx_buffer, tx_length);
   } else {
-    cantp_send_ff(tx_buffer, tx_length);
+    cantp_send_ff(MsgID123, tx_buffer, tx_length);
   }
   write("ECU1 sent %d bytes", tx_length);
 }
 
 on message 0x456
 {
-  byte fs,bs,stmin;
-  if (this.byte(0) >> 4 == FRAME_FC) {
-    fs = this.byte(0) & 0x0F;
-    bs = this.byte(1);
-    stmin = this.byte(2);
-    
-    if (fs == FC_CTS) {
-      dword offset = 6;
-      seq_num = 1;
-      while (offset < tx_length) {
-        cantp_send_cf(tx_buffer, offset, seq_num);
-        offset += 7;
-        seq_num = (seq_num + 1) % 16;
-      }
-    } else if (fs == FC_WAIT) {
-      write("ECU1: Receiver requested wait");
-    } else if (fs == FC_OVF) {
-      write("ECU1: Receiver overflow");
-      cantp_init(); // Reset
-    }
+  RxMsg = this;
+  
+  if ((RxMsg.byte(0) & 0xF0) == FRAME_SF) {
+    cantp_handle_sf(RxMsg);
+  } 
+  else if ((RxMsg.byte(0) & 0xF0) == FRAME_FF) {
+    cantp_handle_ff(RxMsg,MsgID123);
+  } 
+  else if ((RxMsg.byte(0) & 0xF0) == FRAME_CF) {
+    cantp_handle_cf(RxMsg,MsgID123);
+  }
+  else if ((RxMsg.byte(0) & 0xF0) == FRAME_FC) {
+    cantp_handle_fc(RxMsg,MsgID123);
   }
 }
-
-//on timer t_NAs
-//{
-//  write("ECU1: N_As timeout");
-//  cantp_init();
-//}
-//
-//on timer t_NBs
-//{
-//  write("ECU1: N_Bs timeout (no FC received)");
-//  cantp_init();
-//}
