@@ -32,36 +32,31 @@ on key 's'
   write("ECU1 sent %d bytes", tx_length);
 }
 
-//
-//on message 0x456
-//{
-//  // Handle Flow Control Frame from Receiver
-//  if (this.byte(0) >> 4 == FRAME_FC) {
-//    byte fs = this.byte(0) & 0x0F;
-//    byte bs = this.byte(1);
-//    byte stmin = this.byte(2);
-//    
-//    if (fs == FC_CTS) {
-//      dword offset = 6;
-//      seq_num = 1;
-//      while (offset < tx_length) {
-//        cantp_send_cf(0x123, tx_buffer, offset, seq_num);
-//        offset += 7;
-//        seq_num = (seq_num + 1) % 16;
-//        // Respect STmin (simplified delay)
-//        if (stmin > 0) {
-//          setTimer(t_NAs, stmin);
-//        }
-//      }
-//    } else if (fs == FC_WAIT) {
-//      write("ECU1: Receiver requested wait");
-//    } else if (fs == FC_OVF) {
-//      write("ECU1: Receiver overflow");
-//      cantp_init(); // Reset
-//    }
-//  }
-//}
-//
+on message 0x456
+{
+  byte fs,bs,stmin;
+  if (this.byte(0) >> 4 == FRAME_FC) {
+    fs = this.byte(0) & 0x0F;
+    bs = this.byte(1);
+    stmin = this.byte(2);
+    
+    if (fs == FC_CTS) {
+      dword offset = 6;
+      seq_num = 1;
+      while (offset < tx_length) {
+        cantp_send_cf(tx_buffer, offset, seq_num);
+        offset += 7;
+        seq_num = (seq_num + 1) % 16;
+      }
+    } else if (fs == FC_WAIT) {
+      write("ECU1: Receiver requested wait");
+    } else if (fs == FC_OVF) {
+      write("ECU1: Receiver overflow");
+      cantp_init(); // Reset
+    }
+  }
+}
+
 //on timer t_NAs
 //{
 //  write("ECU1: N_As timeout");

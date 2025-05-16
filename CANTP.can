@@ -26,6 +26,7 @@ variables {
   dword rx_length;
   byte seq_num;
   message 0x123 msg;
+  message 0x456 msg2;
 }
 
 // Initialize CAN-TP
@@ -81,12 +82,12 @@ void cantp_send_cf(byte data[], dword offset, byte seq) {
 // Send Flow Control Frame
 void cantp_send_fc(byte fs, byte bs, byte stmin) {
   byte i;
-  msg.dlc = 8;
-  msg.byte(0) = FRAME_FC | (fs & 0x0F);
-  msg.byte(1) = bs;
-  msg.byte(2) = stmin;
+  msg2.dlc = 8;
+  msg2.byte(0) = FRAME_FC | (fs & 0x0F);
+  msg2.byte(1) = bs;
+  msg2.byte(2) = stmin;
   for (i = 3; i < 8; i++) {
-    msg.byte(i) = PADDING;
+    msg2.byte(i) = PADDING;
   }
-  output(msg);
+  output(msg2);
 }
