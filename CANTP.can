@@ -21,16 +21,18 @@ variables {
   byte rx_buffer[4095];
   dword tx_length;
   dword rx_length;
+  dword cf_received = 0;
+  dword fc_received = 0;
   byte seq_num;
   
-  //timer
-  timer stmin;
 }
 
 // Initialize CAN-TP
 void cantp_init() {
   tx_length = 0;
   rx_length = 0;
+  cf_received = 1;
+  fc_received = 1;
   seq_num = 1;
 }
 
@@ -51,6 +53,13 @@ on sysvar SVAR::sysvar_FS
   FS = @SVAR::sysvar_FS;
 }
 
+updateVar()
+{
+  tx_length = @SVAR::sysvar_tx_length;
+  BS = @SVAR::sysvar_BS;
+  STMIN = @SVAR::sysvar_STmin;
+  FS = @SVAR::sysvar_FS;
+}
 
 // Send Single Frame
 void cantp_send_sf(message *Txmsgx, byte data[], dword length) {
@@ -135,7 +144,7 @@ void cantp_handle_cf(message *Rxmsgx,message *Txmsgx)
   seq = Rxmsgx.byte(0) & 0x0F;
   if (seq != seq_num) {
     write("ECU2: Invalid sequence number %d, expected %d", seq, seq_num);
-    //cantp_init();
+    cantp_init();
     return;
   }
   offset = 6 + (seq - 1) * 7;
@@ -146,8 +155,8 @@ void cantp_handle_cf(message *Rxmsgx,message *Txmsgx)
   seq_num = (seq_num + 1) % 16;
   if (offset + len >= rx_length) {
     write("ECU2: Received all CFs, total %d bytes", rx_length);
-    //cantp_init();
-  } else if ((seq % BS) == 0) {
+    cantp_init();
+  } else if (BS != 0 && (seq % BS) == 0) {
     cantp_send_fc(Txmsgx, FC_CTS, BS, STMIN);
   }
 }
@@ -163,20 +172,22 @@ void cantp_handle_fc(message *Rxmsgx,message *Txmsgx)
   if (fs == FC_CTS) {
     dword offset = 6;
     seq_num = 1;
-    while (offset < tx_length) {
+    while (offset < tx_length && cf_received <= bs) {
+      cf_received += 1;
       cantp_send_cf(Txmsgx, tx_buffer, offset, seq_num);
       offset += 7;
       seq_num = (seq_num + 1) % 16;
+    }
+    fc_received += 1;
+    cf_received = 1;
+    if (fc_received > (((tx_length - 6)/7) + 1)/bs + 1) {
+      fc_received = 1;
+      offset= 6;
     }
   } else if (fs == FC_WAIT) {
     write("ECU1: Receiver requested wait");
   } else if (fs == FC_OVF) {
     write("ECU1: Receiver overflow");
-    //cantp_init(); // Reset
+    cantp_init(); // Reset
   }
-}
-
-on timer stmin
-{
-  
 }
