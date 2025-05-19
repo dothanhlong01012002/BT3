@@ -33,22 +33,24 @@ void cantp_init() {
   rx_length = 0;
   seq_num = 1;
 }
-on sysvar tx_length
+
+on sysvar SVAR::sysvar_tx_length
 {
-  tx_length = @sysvar::tx_length;
+  tx_length = @SVAR::sysvar_tx_length;
 }
-on sysvar BS
+on sysvar SVAR::sysvar_BS
 {
-  BS = @sysvar::BS;
+  BS = @SVAR::sysvar_BS;
 }
-on sysvar STmin
+on sysvar SVAR::sysvar_STmin
 {
-  STMIN = @sysvar::STmin;
+  STMIN = @SVAR::sysvar_STmin;
 }
-on sysvar FS
+on sysvar SVAR::sysvar_FS
 {
-  FS = @sysvar::FS;
+  FS = @SVAR::sysvar_FS;
 }
+
 
 // Send Single Frame
 void cantp_send_sf(message *Txmsgx, byte data[], dword length) {
@@ -133,7 +135,7 @@ void cantp_handle_cf(message *Rxmsgx,message *Txmsgx)
   seq = Rxmsgx.byte(0) & 0x0F;
   if (seq != seq_num) {
     write("ECU2: Invalid sequence number %d, expected %d", seq, seq_num);
-    cantp_init();
+    //cantp_init();
     return;
   }
   offset = 6 + (seq - 1) * 7;
@@ -144,7 +146,7 @@ void cantp_handle_cf(message *Rxmsgx,message *Txmsgx)
   seq_num = (seq_num + 1) % 16;
   if (offset + len >= rx_length) {
     write("ECU2: Received all CFs, total %d bytes", rx_length);
-    cantp_init();
+    //cantp_init();
   } else if ((seq % BS) == 0) {
     cantp_send_fc(Txmsgx, FC_CTS, BS, STMIN);
   }
@@ -170,7 +172,7 @@ void cantp_handle_fc(message *Rxmsgx,message *Txmsgx)
     write("ECU1: Receiver requested wait");
   } else if (fs == FC_OVF) {
     write("ECU1: Receiver overflow");
-    cantp_init(); // Reset
+    //cantp_init(); // Reset
   }
 }
 
