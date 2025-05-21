@@ -1,7 +1,8 @@
 /*@!Encoding:1252*/
+
 includes
 {
-  #include "cantp.can"
+  #include "CANTP.can"
 }
 
 variables
@@ -13,7 +14,7 @@ variables
 on start
 {
   cantp_init();
-  write("Receiver ECU2 initialized");
+  write("ECU2 initialized");
 }
 
 on message 0x123
@@ -22,14 +23,47 @@ on message 0x123
   
   if ((RxMsg.byte(0) & 0xF0) == FRAME_SF) {
     cantp_handle_sf(RxMsg);
-  } 
-  else if ((RxMsg.byte(0) & 0xF0) == FRAME_FF) {
-    cantp_handle_ff(RxMsg,MsgID456);
-  } 
-  else if ((RxMsg.byte(0) & 0xF0) == FRAME_CF) {
-    cantp_handle_cf(RxMsg,MsgID456);
+  } else if ((RxMsg.byte(0) & 0xF0) == FRAME_FF) {
+    cantp_handle_ff(RxMsg, MsgID456);
+  } else if ((RxMsg.byte(0) & 0xF0) == FRAME_CF) {
+    cantp_handle_cf(RxMsg, MsgID456);
+  } else if ((RxMsg.byte(0) & 0xF0) == FRAME_FC) {
+    cantp_handle_fc(RxMsg, MsgID456);
   }
-  else if ((RxMsg.byte(0) & 0xF0) == FRAME_FC) {
-    cantp_handle_fc(RxMsg,MsgID456);
+}
+
+on timer t_STmin
+{
+  if (sender_state == STATE_SENDING_CF && cf_offset < tx_length) {
+    cantp_send_cf(MsgID456, tx_buffer, cf_offset, seq_num);
+    cf_offset += 7;
+    seq_num = (seq_num + 1) % 16;
+    
+    if (cf_received >= BS || cf_offset >= tx_length) {
+      sender_state = STATE_WAITING_FC;
+      setTimer(t_NBs, N_BS_TIMEOUT);
+      fc_received++;
+      cf_received = 0;
+    } else {
+      setTimer(t_STmin, STMIN);
+    }
   }
+}
+
+on timer t_NAs
+{
+  write("ECU2: N_As timeout");
+  cantp_init();
+}
+
+on timer t_NBs
+{
+  write("ECU2: N_Bs timeout (no FC received)");
+  cantp_init();
+}
+
+on timer t_NCr
+{
+  write("ECU2: N_Cr timeout (no CF received)");
+  cantp_init();
 }
