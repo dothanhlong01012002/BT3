@@ -12,8 +12,11 @@ variables {
 
   // Timer durations (ms)
   const dword N_AS_TIMEOUT = 1000;
+  const dword N_AR_TIMEOUT = 1000;
   const dword N_BS_TIMEOUT = 1000;
-  const dword N_CR_TIMEOUT = 2000;
+  const dword N_BR_TIMEOUT = 2000;
+  const dword N_CS_TIMEOUT = 2000;
+  const dword N_CR_TIMEOUT = 1000;
 
   // Configuration
   byte BS;                     // Block Size
@@ -23,54 +26,49 @@ variables {
 
   // States
   const byte STATE_IDLE = 0;
-  const byte STATE_SENDING_SF = 1;
-  const byte STATE_SENDING_FF = 2;
-  const byte STATE_SENDING_CF = 3;
-  const byte STATE_WAITING_FC = 4;
-  const byte STATE_RECEIVING_FF = 5;
-  const byte STATE_RECEIVING_CF = 6;
+  const byte STATE_RUNNING = 1;
 
   // Buffers and state
   byte tx_buffer[4095];
   byte rx_buffer[4095];
   dword tx_length;
   dword rx_length;
-  dword cf_received = 0;
-  dword fc_received = 0;
+  dword cf_received;
   byte seq_num;
   byte sender_state;
   byte receiver_state;
-  dword cf_offset;             // Offset for next CF
+  dword cf_offset;
+  
   msTimer t_NAs;
+  msTimer t_NAr;
   msTimer t_NBs;
-  msTimer t_STmin;
+  msTimer t_NBr;
+  msTimer t_NCs;
   msTimer t_NCr;
+  
+  msTimer t_STmin;
 }
 
 // Initialize CAN-TP
 void cantp_init() {
   tx_length = 0;
   rx_length = 0;
+  
   cf_received = 0;
-  fc_received = 0;
   seq_num = 1;
   cf_offset = 6;
+  
   sender_state = STATE_IDLE;
   receiver_state = STATE_IDLE;
+  
   cancelTimer(t_NAs);
   cancelTimer(t_NBs);
-  cancelTimer(t_STmin);
+  cancelTimer(t_NAr);
+  cancelTimer(t_NBr);
+  cancelTimer(t_NCs);
   cancelTimer(t_NCr);
-}
 
-updateVar()
-{
-  if (sender_state == STATE_IDLE && receiver_state == STATE_IDLE) {
-    tx_length = @SVAR::sysvar_tx_length;
-    BS = @SVAR::sysvar_BS;
-    STMIN = @SVAR::sysvar_STmin;
-    FS = @SVAR::sysvar_FS;
-  }
+  cancelTimer(t_STmin);
 }
 
 // Send Single Frame
@@ -84,8 +82,9 @@ void cantp_send_sf(message *Txmsgx, byte data[], dword length) {
   for (i = length + 1; i < 8; i++) {
     Txmsgx.byte(i) = PADDING;
   }
-  output(Txmsgx);
+  
   setTimer(t_NAs, N_AS_TIMEOUT);
+  output(Txmsgx);
   
   if (Txmsgx.TxFailed == 0) {
     cancelTimer(t_NAs);
@@ -104,8 +103,14 @@ void cantp_send_ff(message *Txmsgx, byte data[], dword length) {
   for (i = 6; i < 8; i++) {
     Txmsgx.byte(i) = PADDING;
   }
+  
+  setTimer(t_NAs, N_AS_TIMEOUT);
   output(Txmsgx);
-  setTimer(t_NBs, N_BS_TIMEOUT);
+  
+  if (Txmsgx.TxFailed == 0) {
+    cancelTimer(t_NAs);
+    setTimer(t_NBs, N_BS_TIMEOUT);
+  }
 }
 
 // Send Consecutive Frame
@@ -120,9 +125,15 @@ void cantp_send_cf(message *Txmsgx, byte data[], dword offset, byte seq) {
   for (i = len + 1; i < 8; i++) {
     Txmsgx.byte(i) = PADDING;
   }
-  output(Txmsgx);
   cf_received++;
+  
+  cancelTimer(t_NCs);
   setTimer(t_NAs, N_AS_TIMEOUT);
+  output(Txmsgx);
+
+  if (Txmsgx.TxFailed == 0) {
+    cancelTimer(t_NAs);
+  }
 }
 
 // Send Flow Control Frame
@@ -135,13 +146,20 @@ void cantp_send_fc(message *Txmsgx, byte fs, byte bs, byte stmin) {
   for (i = 3; i < 8; i++) {
     Txmsgx.byte(i) = PADDING;
   }
+  
+  cancelTimer(t_NBr);
+  setTimer(t_NAr,N_AR_TIMEOUT);
   output(Txmsgx);
+  
+  if (Txmsgx.TxFailed == 0) {
+    cancelTimer(t_NAr);
+    setTimer(t_NCr,N_CR_TIMEOUT);
+  }
 }
 
 void cantp_handle_sf(message *Rxmsgx)
 {
   byte i;
-  receiver_state = STATE_IDLE;
   rx_length = Rxmsgx.byte(0) & 0x0F;
   for (i = 0; i < rx_length; i++) {
     rx_buffer[i] = Rxmsgx.byte(i + 1);
@@ -152,14 +170,12 @@ void cantp_handle_sf(message *Rxmsgx)
 void cantp_handle_ff(message *Rxmsgx, message *Txmsgx)
 {
   byte i;
-  receiver_state = STATE_RECEIVING_FF;
   rx_length = ((Rxmsgx.byte(0) & 0x0F) << 8) | Rxmsgx.byte(1);
   for (i = 0; i < 6; i++) {
     rx_buffer[i] = Rxmsgx.byte(i + 2);
   }
+  setTimer(t_NBr,N_BR_TIMEOUT);
   cantp_send_fc(Txmsgx, FC_CTS, BS, STMIN);
-  receiver_state = STATE_RECEIVING_CF;
-  setTimer(t_NCr, N_CR_TIMEOUT);
   write("Received FF, total %d bytes", rx_length);
 }
 
@@ -181,16 +197,17 @@ void cantp_handle_cf(message *Rxmsgx, message *Txmsgx)
   }
   seq_num = (seq_num + 1) % 16;
   cf_received++;
-  setTimer(t_NCr, N_CR_TIMEOUT);
+  cancelTimer(t_NCr);
   
   if (offset + len >= rx_length) {
     write("Received all CFs, total %d bytes", rx_length);
-    receiver_state = STATE_IDLE;
     cantp_init();
   } else if (BS != 0 && cf_received >= BS) {
+    setTimer(t_NBr,N_BR_TIMEOUT);
     cantp_send_fc(Txmsgx, FC_CTS, BS, STMIN);
     cf_received = 0;
-    fc_received++;
+  } else {
+    setTimer(t_NCr,N_CR_TIMEOUT);
   }
 }
 
@@ -198,22 +215,18 @@ void cantp_handle_fc(message *Rxmsgx, message *Txmsgx)
 {
   byte fs, bs, stmin;
   
-  if (sender_state != STATE_SENDING_FF && sender_state != STATE_WAITING_FC) {
-    return;
-  }
-  
   fs = Rxmsgx.byte(0) & 0x0F;
   bs = Rxmsgx.byte(1);
   stmin = Rxmsgx.byte(2);
   
   if (fs == FC_CTS) {
-    sender_state = STATE_SENDING_CF;
     if (cf_offset < tx_length) {
-      setTimer(t_STmin, 0); // Send first CF immediately
+      cancelTimer(t_NBs);
+      setTimer(t_NCs,N_CS_TIMEOUT);
+      setTimer(t_STmin, STMIN);
     }
   } else if (fs == FC_WAIT) {
     write("Receiver requested wait");
-    sender_state = STATE_WAITING_FC;
   } else if (fs == FC_OVF) {
     write("Receiver overflow");
     cantp_init();

@@ -17,15 +17,16 @@ on start
   write("ECU1 initialized");
 }
 
-on key 's'
+on key 'q'
 {
   byte i;
+  updateVar();
+  
   if (sender_state != STATE_IDLE) {
     write("ECU1: Sender busy");
     return;
   }
-  
-  updateVar();
+  sender_state = STATE_RUNNING;
   if (tx_length == 0 || tx_length > 4095) {
     write("ECU1: Invalid tx_length (%d)", tx_length);
     return;
@@ -36,21 +37,21 @@ on key 's'
   }
   
   cf_received = 0;
-  fc_received = 0;
   cf_offset = 6;
   
   if (tx_length <= 7) {
-    sender_state = STATE_SENDING_SF;
     cantp_send_sf(MsgID123, tx_buffer, tx_length);
   } else {
-    sender_state = STATE_SENDING_FF;
     cantp_send_ff(MsgID123, tx_buffer, tx_length);
   }
   write("ECU1 sent %d bytes", tx_length);
+  sender_state = STATE_IDLE;
 }
 
 on message 0x456
 {
+  receiver_state = STATE_RUNNING;
+  updateVar();
   RxMsg = this;
   
   if ((RxMsg.byte(0) & 0xF0) == FRAME_SF) {
@@ -62,21 +63,21 @@ on message 0x456
   } else if ((RxMsg.byte(0) & 0xF0) == FRAME_FC) {
     cantp_handle_fc(RxMsg, MsgID123);
   }
+  receiver_state = STATE_IDLE;
 }
 
 on timer t_STmin
 {
-  if (sender_state == STATE_SENDING_CF && cf_offset < tx_length) {
+  if (cf_offset < tx_length) {
     cantp_send_cf(MsgID123, tx_buffer, cf_offset, seq_num);
     cf_offset += 7;
     seq_num = (seq_num + 1) % 16;
     
-    if (cf_received >= BS || cf_offset >= tx_length) {
-      sender_state = STATE_WAITING_FC;
-      setTimer(t_NBs, N_BS_TIMEOUT);
-      fc_received++;
+    if (BS != 0 && (cf_received >= BS || cf_offset >= tx_length)) {
       cf_received = 0;
+      setTimer(t_NBs,N_BS_TIMEOUT);
     } else {
+      setTimer(t_NCs,N_CS_TIMEOUT);
       setTimer(t_STmin, STMIN);
     }
   }
@@ -98,4 +99,32 @@ on timer t_NCr
 {
   write("ECU1: N_Cr timeout (no CF received)");
   cantp_init();
+}
+
+on timer t_NAr
+{
+  write("ECU1: N_Ar timeout");
+  cantp_init();
+}
+
+on timer t_NBr
+{
+  write("ECU1: N_Bs timeout (no FC sent)");
+  cantp_init();
+}
+
+on timer t_NCs
+{
+  write("ECU1: N_Cs timeout (no CF sent)");
+  cantp_init();
+}
+
+updateVar()
+{
+  if (sender_state == STATE_IDLE && receiver_state == STATE_IDLE) {
+    tx_length = @PANEL1::sysvar_tx_length;
+    BS = @PANEL1::sysvar_BS;
+    STMIN = @PANEL1::sysvar_STmin;
+    FS = @PANEL1::sysvar_FS;
+  }
 }
