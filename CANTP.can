@@ -54,41 +54,13 @@ void cantp_init() {
   cf_received = 0;
   fc_received = 0;
   seq_num = 1;
-  cf_offset = 0;
+  cf_offset = 6;
   sender_state = STATE_IDLE;
   receiver_state = STATE_IDLE;
   cancelTimer(t_NAs);
   cancelTimer(t_NBs);
   cancelTimer(t_STmin);
   cancelTimer(t_NCr);
-}
-
-on sysvar SVAR::sysvar_tx_length
-{
-  if (sender_state == STATE_IDLE && receiver_state == STATE_IDLE) {
-    tx_length = @SVAR::sysvar_tx_length;
-  }
-}
-
-on sysvar SVAR::sysvar_BS
-{
-  if (sender_state == STATE_IDLE && receiver_state == STATE_IDLE) {
-    BS = @SVAR::sysvar_BS;
-  }
-}
-
-on sysvar SVAR::sysvar_STmin
-{
-  if (sender_state == STATE_IDLE && receiver_state == STATE_IDLE) {
-    STMIN = @SVAR::sysvar_STmin;
-  }
-}
-
-on sysvar SVAR::sysvar_FS
-{
-  if (sender_state == STATE_IDLE && receiver_state == STATE_IDLE) {
-    FS = @SVAR::sysvar_FS;
-  }
 }
 
 updateVar()
@@ -114,6 +86,10 @@ void cantp_send_sf(message *Txmsgx, byte data[], dword length) {
   }
   output(Txmsgx);
   setTimer(t_NAs, N_AS_TIMEOUT);
+  
+  if (Txmsgx.TxFailed == 0) {
+    cancelTimer(t_NAs);
+  }
 }
 
 // Send First Frame

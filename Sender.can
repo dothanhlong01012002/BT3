@@ -25,7 +25,7 @@ on key 's'
     return;
   }
   
-  updateVar(); // Update BS, STMIN, tx_length, FS
+  updateVar();
   if (tx_length == 0 || tx_length > 4095) {
     write("ECU1: Invalid tx_length (%d)", tx_length);
     return;
@@ -37,7 +37,7 @@ on key 's'
   
   cf_received = 0;
   fc_received = 0;
-  cf_offset = 0;
+  cf_offset = 6;
   
   if (tx_length <= 7) {
     sender_state = STATE_SENDING_SF;

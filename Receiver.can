@@ -19,6 +19,7 @@ on start
 
 on message 0x123
 {
+  updateVar();
   RxMsg = this;
   
   if ((RxMsg.byte(0) & 0xF0) == FRAME_SF) {
