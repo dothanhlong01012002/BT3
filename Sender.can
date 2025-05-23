@@ -36,24 +36,20 @@ on key 'q'
     tx_buffer[i] = i + 1;
   }
   
-  cf_received = 0;
-  cf_offset = 6;
-  
   if (tx_length <= 7) {
     cantp_send_sf(MsgID123, tx_buffer, tx_length);
   } else {
     cantp_send_ff(MsgID123, tx_buffer, tx_length);
   }
-  write("ECU1 sent %d bytes", tx_length);
   sender_state = STATE_IDLE;
+  write("ECU1 sent %d bytes", tx_length);
 }
 
 on message 0x456
 {
-  receiver_state = STATE_RUNNING;
   updateVar();
   RxMsg = this;
-  
+  receiver_state = STATE_RUNNING;
   if ((RxMsg.byte(0) & 0xF0) == FRAME_SF) {
     cantp_handle_sf(RxMsg);
   } else if ((RxMsg.byte(0) & 0xF0) == FRAME_FF) {
@@ -73,43 +69,19 @@ on timer t_STmin
     cf_offset += 7;
     seq_num = (seq_num + 1) % 16;
     
-    if (BS != 0 && (cf_received >= BS || cf_offset >= tx_length)) {
+    if (BS != 0 && (cf_received >= BS)) {
       cf_received = 0;
-      setTimer(t_NBs,N_BS_TIMEOUT);
+    } else if (cf_offset >= tx_length) {
+      cantp_init();
     } else {
-      setTimer(t_NCs,N_CS_TIMEOUT);
       setTimer(t_STmin, STMIN);
     }
   }
 }
 
-on timer t_NAs
-{
-  write("ECU1: N_As timeout");
-  cantp_init();
-}
-
-on timer t_NBs
-{
-  write("ECU1: N_Bs timeout (no FC received)");
-  cantp_init();
-}
-
-on timer t_NCr
-{
-  write("ECU1: N_Cr timeout (no CF received)");
-  cantp_init();
-}
-
-on timer t_NAr
-{
-  write("ECU1: N_Ar timeout");
-  cantp_init();
-}
-
 on timer t_NBr
 {
-  write("ECU1: N_Bs timeout (no FC sent)");
+  write("ECU1: N_Br timeout (no FC sent)");
   cantp_init();
 }
 

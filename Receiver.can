@@ -36,16 +36,13 @@ on key 'p'
     tx_buffer[i] = i + 1;
   }
   
-  cf_received = 0;
-  cf_offset = 6;
-  
   if (tx_length <= 7) {
     cantp_send_sf(MsgID456, tx_buffer, tx_length);
   } else {
     cantp_send_ff(MsgID456, tx_buffer, tx_length);
   }
-  write("ECU2 sent %d bytes", tx_length);
   sender_state = STATE_IDLE;
+  write("ECU2 sent %d bytes", tx_length);
 }
 
 on message 0x123
@@ -74,41 +71,15 @@ on timer t_STmin
     
     if (BS != 0 && (cf_received >= BS || cf_offset >= tx_length)) {
       cf_received = 0;
-      setTimer(t_NBs,N_BS_TIMEOUT);
     } else {
-      setTimer(t_NCs,N_CS_TIMEOUT);
       setTimer(t_STmin, STMIN);
     }
   }
 }
 
-on timer t_NAs
-{
-  write("ECU2: N_As timeout");
-  cantp_init();
-}
-
-on timer t_NBs
-{
-  write("ECU2: N_Bs timeout (no FC received)");
-  cantp_init();
-}
-
-on timer t_NCr
-{
-  write("ECU2: N_Cr timeout (no CF received)");
-  cantp_init();
-}
-
-on timer t_NAr
-{
-  write("ECU2: N_Ar timeout");
-  cantp_init();
-}
-
 on timer t_NBr
 {
-  write("ECU2: N_Bs timeout (no FC sent)");
+  write("ECU2: N_Br timeout (no FC sent)");
   cantp_init();
 }
 
@@ -117,6 +88,7 @@ on timer t_NCs
   write("ECU2: N_Cs timeout (no CF sent)");
   cantp_init();
 }
+
 updateVar()
 {
   if (sender_state == STATE_IDLE && receiver_state == STATE_IDLE) {
