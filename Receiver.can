@@ -7,8 +7,8 @@ includes
 
 variables
 {
-  message 0x456 MsgID456;
-  message 0x123 RxMsg;
+  message 0x456 TxMsgID456;
+  message 0x123 RxMsgID123;
 }
 
 on start
@@ -19,82 +19,45 @@ on start
 
 on key 'p'
 {
-  byte i;
-  updateVar();
-  
-  if (sender_state != STATE_IDLE) {
-    write("ECU2: Sender busy");
-    return;
-  }
-  sender_state = STATE_RUNNING;
-  if (tx_length == 0 || tx_length > 4095) {
-    write("ECU2: Invalid tx_length (%d)", tx_length);
-    return;
-  }
-  
-  for (i = 0; i < tx_length; i++) {
-    tx_buffer[i] = i + 1;
-  }
-  
-  if (tx_length <= 7) {
-    cantp_send_sf(MsgID456, tx_buffer, tx_length);
-  } else {
-    cantp_send_ff(MsgID456, tx_buffer, tx_length);
-  }
-  sender_state = STATE_IDLE;
-  write("ECU2 sent %d bytes", tx_length);
+  cantp_handle_send_message(TxMsgID456);
 }
 
 on message 0x123
 {
-  updateVar();
-  RxMsg = this;
-  receiver_state = STATE_RUNNING;
-  if ((RxMsg.byte(0) & 0xF0) == FRAME_SF) {
-    cantp_handle_sf(RxMsg);
-  } else if ((RxMsg.byte(0) & 0xF0) == FRAME_FF) {
-    cantp_handle_ff(RxMsg, MsgID456);
-  } else if ((RxMsg.byte(0) & 0xF0) == FRAME_CF) {
-    cantp_handle_cf(RxMsg, MsgID456);
-  } else if ((RxMsg.byte(0) & 0xF0) == FRAME_FC) {
-    cantp_handle_fc(RxMsg, MsgID456);
-  }
-  receiver_state = STATE_IDLE;
+  RxMsgID123 = this;
+  cantp_handle_received_frame(RxMsgID123,TxMsgID456);
 }
 
 on timer t_STmin
 {
-  if (cf_offset < tx_length) {
-    cantp_send_cf(MsgID456, tx_buffer, cf_offset, seq_num);
-    cf_offset += 7;
-    seq_num = (seq_num + 1) % 16;
-    
-    if (BS != 0 && (cf_received >= BS || cf_offset >= tx_length)) {
-      cf_received = 0;
-    } else {
-      setTimer(t_STmin, STMIN);
-    }
+  cantp_handle_send_cf_on_stmin(TxMsgID456);
+}
+
+on timer t_sendFCWaitTimer
+{
+  cantp_send_fc(TxMsgID456, FS, BS, STMIN);
+  if (FS == FC_WAIT && g_fc_wait_sent != MAX_FC_WAIT)
+  {
+    g_fc_wait_sent++;
+    setTimer(t_sendFCWaitTimer,SEND_FC_WAIT_TIMEOUT);
+  } else {
+    //Do nothing
   }
 }
 
-on timer t_NBr
+on sysvar PANEL2::sysvar_tx_length
 {
-  write("ECU2: N_Br timeout (no FC sent)");
-  cantp_init();
+  g_tx_length = @PANEL2::sysvar_tx_length;
 }
-
-on timer t_NCs
+on sysvar PANEL2::sysvar_BS
 {
-  write("ECU2: N_Cs timeout (no CF sent)");
-  cantp_init();
+  BS = @PANEL2::sysvar_BS;
 }
-
-updateVar()
+on sysvar PANEL2::sysvar_STmin
 {
-  if (sender_state == STATE_IDLE && receiver_state == STATE_IDLE) {
-    tx_length = @PANEL2::sysvar_tx_length;
-    BS = @PANEL2::sysvar_BS;
-    STMIN = @PANEL2::sysvar_STmin;
-    FS = @PANEL2::sysvar_FS;
-  }
+  STMIN = @PANEL2::sysvar_STmin;
+}
+on sysvar PANEL2::sysvar_FS
+{
+  FS = @PANEL2::sysvar_FS;
 }

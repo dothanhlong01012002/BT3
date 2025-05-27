@@ -10,52 +10,40 @@ variables {
   const byte FC_WAIT = 0x01;   // Wait
   const byte FC_OVF = 0x02;    // Overflow
 
-  // Timer durations (ms)
-  const dword N_BR_TIMEOUT = 2000;
-  const dword N_CS_TIMEOUT = 2000;
-
+  const byte MAX_FC_WAIT = 10; // maximum number of FC.WAIT frames
+  const byte SEND_FC_WAIT_TIMEOUT = 10; // maximum number of FC.WAIT frames
+  
   // Configuration
   byte BS;                     // Block Size
   byte STMIN;                  // Separation Time (ms)
   byte PADDING = 0xCC;         // Padding value
   byte FS;                     // Flow Status
 
-  // States
-  const byte STATE_IDLE = 0;
-  const byte STATE_RUNNING = 1;
-
   // Buffers and state
-  byte tx_buffer[4095];
-  byte rx_buffer[4095];
-  dword tx_length;
-  dword rx_length;
-  dword cf_received;
-  byte seq_num;
-  byte sender_state;
-  byte receiver_state;
-  dword cf_offset;
+  byte g_tx_buffer[4095];
+  byte g_rx_buffer[4095];
+  dword g_tx_length;
+  dword g_rx_length;
+  dword g_cf_received;
+  byte g_seq_num;
+  dword g_cf_offset;
+  byte g_fc_wait_sent = 0;
   
-  msTimer t_NBr;
-  msTimer t_NCs;
-  
+  // Parameter timers
   msTimer t_STmin;
+  msTimer t_sendFCWaitTimer;
 }
 
 // Initialize CAN-TP
 void cantp_init() {
-  tx_length = 0;
-  rx_length = 0;
+  g_tx_length = 0;
+  g_rx_length = 0;
   
-  cf_received = 0;
-  seq_num = 1;
-  cf_offset = 6;
+  g_cf_received = 0;
+  g_seq_num = 1;
+  g_cf_offset = 6;
+  g_fc_wait_sent = 0;
   
-  sender_state = STATE_IDLE;
-  receiver_state = STATE_IDLE;
-  
-  cancelTimer(t_NBr);
-  cancelTimer(t_NCs);
-
   cancelTimer(t_STmin);
 }
 
@@ -88,7 +76,7 @@ void cantp_send_ff(message *Txmsgx, byte data[], dword length) {
 // Send Consecutive Frame
 void cantp_send_cf(message *Txmsgx, byte data[], dword offset, byte seq) {
   byte i, len;
-  len = (tx_length - offset > 7) ? 7 : (tx_length - offset);
+  len = (g_tx_length - offset > 7) ? 7 : (g_tx_length - offset);
   Txmsgx.dlc = 8;
   Txmsgx.byte(0) = FRAME_CF | (seq & 0x0F);
   for (i = 0; i < len; i++) {
@@ -97,12 +85,8 @@ void cantp_send_cf(message *Txmsgx, byte data[], dword offset, byte seq) {
   for (i = len + 1; i < 8; i++) {
     Txmsgx.byte(i) = PADDING;
   }
-  cf_received++;
-  cancelTimer(t_NCs);
+  g_cf_received++;
   output(Txmsgx);
-  if (cf_received <= BS) {
-    setTimer(t_NCs,N_CS_TIMEOUT);
-  }
 }
 
 // Send Flow Control Frame
@@ -114,34 +98,30 @@ void cantp_send_fc(message *Txmsgx, byte fs, byte bs, byte stmin) {
   Txmsgx.byte(2) = stmin;
   for (i = 3; i < 8; i++) {
     Txmsgx.byte(i) = PADDING;
-  }
-  cancelTimer(t_NBr);
+  };
   output(Txmsgx);
-  if (fs == FC_WAIT) {
-    setTimer(t_NBr,N_BR_TIMEOUT);
-  }
 }
 
 void cantp_handle_sf(message *Rxmsgx)
 {
   byte i;
-  rx_length = Rxmsgx.byte(0) & 0x0F;
-  for (i = 0; i < rx_length; i++) {
-    rx_buffer[i] = Rxmsgx.byte(i + 1);
+  g_rx_length = Rxmsgx.byte(0) & 0x0F;
+  for (i = 0; i < g_rx_length; i++) {
+    g_rx_buffer[i] = Rxmsgx.byte(i + 1);
   }
-  write("Received SF, %d bytes", rx_length);
+  write("Received SF, %d bytes", g_rx_length);
 }
 
 void cantp_handle_ff(message *Rxmsgx, message *Txmsgx)
 {
   byte i;
-  rx_length = ((Rxmsgx.byte(0) & 0x0F) << 8) | Rxmsgx.byte(1);
+  g_rx_length = ((Rxmsgx.byte(0) & 0x0F) << 8) | Rxmsgx.byte(1);
   for (i = 0; i < 6; i++) {
-    rx_buffer[i] = Rxmsgx.byte(i + 2);
+    g_rx_buffer[i] = Rxmsgx.byte(i + 2);
   }
-  setTimer(t_NBr,N_BR_TIMEOUT);
+  setTimer(t_sendFCWaitTimer,SEND_FC_WAIT_TIMEOUT);
   cantp_send_fc(Txmsgx, FS, BS, STMIN);
-  write("Received FF, total %d bytes", rx_length);
+  write("Received FF, total %d bytes", g_rx_length);
 }
 
 void cantp_handle_cf(message *Rxmsgx, message *Txmsgx)
@@ -150,26 +130,29 @@ void cantp_handle_cf(message *Rxmsgx, message *Txmsgx)
   byte seq, i, len;
   
   seq = Rxmsgx.byte(0) & 0x0F;
-  if (seq != seq_num) {
-    write("Invalid sequence number %d, expected %d", seq, seq_num);
+  if (seq != g_seq_num) {
+    write("Invalid sequence number %d, expected %d", seq, g_seq_num);
     cantp_init();
     return;
+  } else {
+    // Do nothing
   }
   offset = 6 + (seq - 1) * 7;
-  len = (rx_length - offset > 7) ? 7 : (rx_length - offset);
+  len = (g_rx_length - offset > 7) ? 7 : (g_rx_length - offset);
   for (i = 0; i < len; i++) {
-    rx_buffer[offset + i] = Rxmsgx.byte(i + 1);
+    g_rx_buffer[offset + i] = Rxmsgx.byte(i + 1);
   }
-  seq_num = (seq_num + 1) % 16;
-  cf_received++;
+  g_seq_num = (g_seq_num + 1) % 16;
+  g_cf_received++;
   
-  if (offset + len >= rx_length) {
-    write("Received all CFs, total %d bytes", rx_length);
+  if (offset + len >= g_rx_length) {
+    write("Received all CFs, total %d bytes", g_rx_length);
     cantp_init();
-  } else if (BS != 0 && cf_received >= BS) {
-    setTimer(t_NBr,N_BR_TIMEOUT);
-    cantp_send_fc(Txmsgx, FC_CTS, BS, STMIN);
-    cf_received = 0;
+  } else if (BS != 0 && g_cf_received >= BS) {
+    cantp_send_fc(Txmsgx, FS, BS, STMIN);
+    g_cf_received = 0;
+  } else {
+    // Do nothing
   }
 }
 
@@ -182,14 +165,74 @@ void cantp_handle_fc(message *Rxmsgx, message *Txmsgx)
   stmin = Rxmsgx.byte(2);
   
   if (fs == FC_CTS) {
-    if (cf_offset < tx_length) {
-      setTimer(t_NCs,N_CS_TIMEOUT);
+    if (g_cf_offset < g_tx_length) {
       setTimer(t_STmin, STMIN);
+    } else {
+      // Do nothing
     }
   } else if (fs == FC_WAIT) {
     write("Receiver requested wait");
   } else if (fs == FC_OVF) {
     write("Receiver overflow");
     cantp_init();
+  } else {
+    // Do nothing
   }
+}
+
+void cantp_handle_received_frame(message *Rxmsgx, message *Txmsgx)
+{
+  if ((Rxmsgx.byte(0) & 0xF0) == FRAME_SF) {
+    cantp_handle_sf(Rxmsgx);
+  } else if ((Rxmsgx.byte(0) & 0xF0) == FRAME_FF) {
+    cantp_handle_ff(Rxmsgx, Txmsgx);
+  } else if ((Rxmsgx.byte(0) & 0xF0) == FRAME_CF) {
+    cantp_handle_cf(Rxmsgx, Txmsgx);
+  } else if ((Rxmsgx.byte(0) & 0xF0) == FRAME_FC) {
+    cantp_handle_fc(Rxmsgx, Txmsgx);
+  } else {
+    // Do nothing
+  }
+}
+
+void cantp_handle_send_cf_on_stmin(message *Txmsgx)
+{
+  if (g_cf_offset < g_tx_length) {
+    cantp_send_cf(Txmsgx, g_tx_buffer, g_cf_offset, g_seq_num);
+    g_cf_offset += 7;
+    g_seq_num = (g_seq_num + 1) % 16;
+    
+    if (BS != 0 && (g_cf_received >= BS)) {
+      g_cf_received = 0;
+    } else if (g_cf_offset >= g_tx_length) {
+      cantp_init();
+    } else {
+      setTimer(t_STmin, STMIN);
+    }
+  } else {
+    // Do nothing
+  }
+}
+
+void cantp_handle_send_message(message *Txmsgx)
+{
+  byte i;
+  
+  if (g_tx_length == 0 || g_tx_length > 4095) {
+    write("ID 0x%03X: Invalid tx_length (%d)", Txmsgx.id,g_tx_length);
+    return;
+  } else {
+    // Do nothing
+  }
+ 
+  for (i = 0; i < g_tx_length; i++) {
+    g_tx_buffer[i] = i + 1;
+  }
+  
+  if (g_tx_length <= 7) {
+    cantp_send_sf(Txmsgx, g_tx_buffer, g_tx_length);
+  } else {
+    cantp_send_ff(Txmsgx, g_tx_buffer, g_tx_length);
+  }
+  write("ID 0x%03X sent %d bytes", g_tx_length);
 }
