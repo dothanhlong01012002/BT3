@@ -11,7 +11,7 @@ variables {
   const byte FC_OVF = 0x02;    // Overflow
 
   const byte MAX_FC_WAIT = 100; // maximum number of FC.WAIT frames
-  const dword SEND_FC_WAIT_TIMEOUT = 500; // maximum number of FC.WAIT frames
+  const dword SEND_FC_WAIT_TIMEOUT = 20; // maximum number of FC.WAIT frames
   const byte PADDING = 0xCC;    // Padding value
 
   const byte SF_MAX_DATA_LEN     = 7;   // Max data in Single Frame
@@ -33,20 +33,24 @@ variables {
   byte g_stmin;                 // Separation Time (ms)
   byte g_flow_status;           // Flow Status
 
+  byte g_fs_receive,g_bs_receive, g_stmin_receive;
   // Buffers and state
   byte g_tx_buffer[4095];
   byte g_rx_buffer[4095];
   dword g_tx_length;
   dword g_rx_length;
   dword g_cf_received;
-  byte g_seq_num;
+  dword g_seq_num;
   dword g_cf_offset;
   dword g_rx_offset;
-  byte g_fc_wait_sent;
+  dword g_fc_wait_sent;
   
   // Parameter timers
   msTimer t_NBr;
   msTimer t_NCs;
+  
+  message *tx_message;
+  message *rx_message;
 }
 
 /**
@@ -74,7 +78,7 @@ void cantp_init() {
  * @param length : Length of the data.
  */
 void cantp_send_single_frame(message *tx_message, byte data[], dword length) {
-  byte i;
+  dword i;
   tx_message.dlc = CAN_DLC;
   tx_message.byte(0) = FRAME_SF | (length & LOW_NIBBLE_MASK);
   for (i = 0; i < length; i++) {
@@ -94,7 +98,7 @@ void cantp_send_single_frame(message *tx_message, byte data[], dword length) {
  * @param length : Total length of the complete message.
  */
 void cantp_send_first_frame(message *tx_message, byte data[], dword length) {
-  byte i;
+  dword i;
   tx_message.dlc = CAN_DLC;
   tx_message.byte(0) = FRAME_FF | ((length >> 8) & LOW_NIBBLE_MASK);
   tx_message.byte(1) = length & BYTE_MASK;
@@ -113,7 +117,7 @@ void cantp_send_first_frame(message *tx_message, byte data[], dword length) {
  * @param seq : Sequence number of the current CF (0-15).
  */
 void cantp_send_consecutive_frame(message *tx_message, byte data[], dword offset, byte seq) {
-  byte i, len;
+  dword i, len;
   len = (g_tx_length - offset > CF_DATA_LEN) ? CF_DATA_LEN : (g_tx_length - offset);
   tx_message.dlc = CAN_DLC;
   tx_message.byte(0) = FRAME_CF | (seq & LOW_NIBBLE_MASK);
@@ -136,7 +140,7 @@ void cantp_send_consecutive_frame(message *tx_message, byte data[], dword offset
  * @param stmin : Minimum separation time between CFs.
  */
 void cantp_send_flow_control_frame(message *tx_message, byte fs, byte bs, byte stmin) {
-  byte i;
+  dword i;
   tx_message.dlc = CAN_DLC;
   tx_message.byte(0) = FRAME_FC | (fs & LOW_NIBBLE_MASK);
   tx_message.byte(1) = bs;
@@ -154,7 +158,7 @@ void cantp_send_flow_control_frame(message *tx_message, byte fs, byte bs, byte s
  */
 void cantp_process_single_frame(message *rx_message)
 {
-  byte i;
+  dword i;
   g_rx_length = rx_message.byte(0) & LOW_NIBBLE_MASK;
   for (i = 0; i < g_rx_length; i++) {
     g_rx_buffer[i] = rx_message.byte(i + 1);
@@ -169,7 +173,7 @@ void cantp_process_single_frame(message *rx_message)
  */
 void cantp_process_first_frame(message *rx_message)
 {
-  byte i;
+  dword i;
   g_rx_length = ((rx_message.byte(0) & LOW_NIBBLE_MASK) << 8) | rx_message.byte(1);
   for (i = 0; i < FF_DATA_LEN; i++) {
     g_rx_buffer[i] = rx_message.byte(i + 2);
@@ -185,7 +189,7 @@ void cantp_process_first_frame(message *rx_message)
  */
 void cantp_process_consecutive_frame(message *rx_message)
 {
-  byte seq, i, len;
+  dword seq, i, len;
   
   seq = rx_message.byte(0) & LOW_NIBBLE_MASK;
   if (seq != g_seq_num) {
@@ -221,22 +225,20 @@ void cantp_process_consecutive_frame(message *rx_message)
  * @param rx_message : Pointer to the received CAN message structure.
  */
 void cantp_process_flow_control_frame(message *rx_message)
-{
-  byte fs, bs, stmin;
+{ 
+  g_fs_receive = rx_message.byte(0) & LOW_NIBBLE_MASK;
+  g_bs_receive = rx_message.byte(1);
+  g_stmin_receive = rx_message.byte(2);
   
-  fs = rx_message.byte(0) & LOW_NIBBLE_MASK;
-  bs = rx_message.byte(1);
-  stmin = rx_message.byte(2);
-  
-  if (fs == FC_CTS) {
+  if (g_fs_receive == FC_CTS) {
     if (g_cf_offset < g_tx_length) {
-      setTimer(t_NCs, g_stmin);
+      setTimer(t_NCs, g_stmin_receive);
     } else {
       // Do nothing
     }
-  } else if (fs == FC_WAIT) {
+  } else if (g_fs_receive == FC_WAIT) {
     write("Receiver requested wait");
-  } else if (fs == FC_OVF) {
+  } else if (g_fs_receive == FC_OVF) {
     write("Receiver overflow");
     cantp_init();
   } else {
@@ -250,7 +252,7 @@ void cantp_process_flow_control_frame(message *rx_message)
  * @param Rxmsgx : Pointer to the received CAN message.
  * @param tx_message : Pointer to the message structure for responses.
  */
-void cantp_rx_process_message(message *rx_message, message *tx_message)
+void cantp_rx_process_message(message *rx_message)
 {
   if ((rx_message.byte(0) & HIGH_NIBBLE_MASK) == FRAME_SF) {
     cantp_process_single_frame(rx_message);
@@ -279,10 +281,10 @@ void cantp_handle_send_cf_on_stmin(message *tx_message)
     
     if (g_cf_offset >= g_tx_length) {
       cantp_init();
-    } else if (g_block_size != 0 && (g_cf_received >= g_block_size)) {
+    } else if (g_bs_receive != 0 && (g_cf_received >= g_bs_receive)) {
       g_cf_received = 0;
     } else {
-      setTimer(t_NCs, g_stmin);
+      setTimer(t_NCs, g_stmin_receive);
     }
   } else {
     cantp_init();
@@ -296,7 +298,7 @@ void cantp_handle_send_cf_on_stmin(message *tx_message)
  */
 void cantp_tx_send_message(message *tx_message)
 {
-  byte i;
+  dword i;
   
   if (g_tx_length <= MIN_DATA_LENGTH || g_tx_length > MAX_DATA_LENGTH) {
     write("ID 0x%03X: Invalid tx_length (%d)", tx_message.id,g_tx_length);
@@ -306,7 +308,7 @@ void cantp_tx_send_message(message *tx_message)
   }
  
   for (i = 0; i < g_tx_length; i++) {
-    g_tx_buffer[i] = i + 1;
+    g_tx_buffer[i] = i % 255 + 1;
   }
   
   if (g_tx_length <= SF_MAX_DATA_LEN) {
@@ -315,4 +317,23 @@ void cantp_tx_send_message(message *tx_message)
     cantp_send_first_frame(tx_message, g_tx_buffer, g_tx_length);
   }
   write("ID 0x%03X sent %d bytes", tx_message.id,g_tx_length);
+}
+
+on timer t_NCs
+{
+  cantp_handle_send_cf_on_stmin(tx_message);
+}
+
+on timer t_NBr
+{
+  cantp_send_flow_control_frame(tx_message, g_flow_status, g_block_size, g_stmin);
+  if (g_flow_status == FC_WAIT && g_fc_wait_sent != MAX_FC_WAIT)
+  {
+    g_fc_wait_sent++;
+    setTimer(t_NBr,SEND_FC_WAIT_TIMEOUT);
+  } else if (g_fc_wait_sent == MAX_FC_WAIT) {
+    cantp_init();
+  } else {
+    // Do nothing
+  }
 }
