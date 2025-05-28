@@ -1,0 +1,79 @@
+/*@!Encoding:1252*/
+
+includes
+{
+  #include "CANTP.can"
+}
+
+variables
+{
+  message 0x123 tx_message_123;
+  message 0x456 rx_message_456;
+}
+
+on start
+{
+  cantp_init();
+  write("ECU1 initialized");
+}
+
+//on sysvar PANEL1::sysvar_send_msg
+//{
+//  updateVar();
+//  cantp_handle_send_message(tx_message_123);
+//}
+on key 'q'
+{
+  update_panel_variable();
+  cantp_tx_send_message(tx_message_123);
+}
+on message 0x456
+{
+  update_panel_variable();
+  rx_message_456 = this;
+  cantp_rx_process_message(rx_message_456,tx_message_123);
+}
+
+on timer t_NCs
+{
+  cantp_handle_send_cf_on_stmin(tx_message_123);
+}
+
+on timer t_NBr
+{
+  cantp_send_flow_control_frame(tx_message_123, g_flow_status, g_block_size, g_stmin);
+  if (g_flow_status == FC_WAIT && g_fc_wait_sent != MAX_FC_WAIT)
+  {
+    g_fc_wait_sent++;
+    setTimer(t_NBr,SEND_FC_WAIT_TIMEOUT);
+  } else if (g_fc_wait_sent == MAX_FC_WAIT) {
+    cantp_init();
+  } else {
+    // Do nothing
+  }
+}
+
+on sysvar PANEL1::sysvar_tx_length
+{
+  g_tx_length = @PANEL1::sysvar_tx_length;
+}
+on sysvar PANEL1::sysvar_BS
+{
+  g_block_size = @PANEL1::sysvar_BS;
+}
+on sysvar PANEL1::sysvar_STmin
+{
+  g_stmin = @PANEL1::sysvar_STmin;
+}
+on sysvar PANEL1::sysvar_FS
+{
+  g_flow_status = @PANEL1::sysvar_FS;
+}
+
+void update_panel_variable()
+{
+  g_tx_length = @PANEL1::sysvar_tx_length;
+  g_block_size = @PANEL1::sysvar_BS;
+  g_stmin = @PANEL1::sysvar_STmin;
+  g_flow_status = @PANEL1::sysvar_FS;
+}
