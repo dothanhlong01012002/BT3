@@ -23,6 +23,7 @@ on sysvar PANEL2::sysvar_button_pressed
   byte button_state;
   button_state = @this;
   if (button_state == 1 && last_button_state == 0) {
+    update_panel_variable();
     cantp_tx_send_message(tx_message);
   } else {
     //Do nothing
@@ -32,6 +33,7 @@ on sysvar PANEL2::sysvar_button_pressed
 
 on message 0x123
 {
+  update_panel_variable();
   rx_message = this;
   cantp_rx_process_message(rx_message);
 }
@@ -40,18 +42,7 @@ on sysvar PANEL2::sysvar_tx_length
 {
   g_tx_length = @PANEL2::sysvar_tx_length;
 }
-on sysvar PANEL2::sysvar_BS
-{
-  g_block_size = @PANEL2::sysvar_BS;
-}
-on sysvar PANEL2::sysvar_STmin
-{
-  g_stmin = @PANEL2::sysvar_STmin;
-}
-on sysvar PANEL2::sysvar_FS
-{
-  g_flow_status = @PANEL2::sysvar_FS;
-}
+
 on sysvar PANEL2::sysvar_BS
 {
   int bs;
@@ -83,4 +74,11 @@ on sysVar PANEL2::sysvar_FS
     return;
   }
   g_flow_status = fs;
+}
+void update_panel_variable()
+{
+  g_tx_length = @PANEL2::sysvar_tx_length;
+  g_block_size = @PANEL2::sysvar_BS;
+  g_stmin = @PANEL2::sysvar_STmin;
+  g_flow_status = @PANEL2::sysvar_FS;
 }

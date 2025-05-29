@@ -11,7 +11,7 @@ variables {
   const byte FC_OVF = 0x02;    // Overflow
 
   const byte MAX_FC_WAIT = 100; // maximum number of FC.WAIT frames
-  const dword SEND_FC_WAIT_TIMEOUT = 20; // maximum number of FC.WAIT frames
+  const dword SEND_FC_WAIT_TIMEOUT = 200; // maximum number of FC.WAIT frames
   const byte PADDING = 0xCC;    // Padding value
 
   const byte SF_MAX_DATA_LEN     = 7;   // Max data in Single Frame
@@ -31,19 +31,21 @@ variables {
   // Configuration
   byte g_block_size;            // Block Size
   byte g_stmin;                 // Separation Time (ms)
-  byte g_flow_status;           // Flow Status
+  byte g_flow_status;          // Flow Status
 
   byte g_fs_receive,g_bs_receive, g_stmin_receive;
   // Buffers and state
   byte g_tx_buffer[4095];
+  byte g_segmented_data_buffer[584][7];
   byte g_rx_buffer[4095];
   dword g_tx_length;
   dword g_rx_length;
   dword g_cf_received;
   dword g_seq_num;
-  dword g_cf_offset;
   dword g_rx_offset;
   dword g_fc_wait_sent;
+  dword g_frame_count;
+  dword g_total_frames;
   
   // Parameter timers
   msTimer t_NBr;
@@ -61,11 +63,10 @@ void cantp_init() {
   g_rx_length = MIN_DATA_LENGTH;
   
   g_seq_num = SEQ_NUM_INIT;
-  g_cf_offset = FF_DATA_LEN;
   g_rx_offset = FF_DATA_LEN;
   g_fc_wait_sent = 0;
   g_cf_received = 0;
-  
+  g_frame_count = 0;
   cancelTimer(t_NCs);
   cancelTimer(t_NBr);
 }
@@ -97,14 +98,15 @@ void cantp_send_single_frame(message *tx_message, byte data[], dword length) {
  * @param data : Payload data to send.
  * @param length : Total length of the complete message.
  */
-void cantp_send_first_frame(message *tx_message, byte data[], dword length) {
+void cantp_send_first_frame(message *tx_message, byte data[][], dword length) {
   dword i;
   tx_message.dlc = CAN_DLC;
   tx_message.byte(0) = FRAME_FF | ((length >> 8) & LOW_NIBBLE_MASK);
   tx_message.byte(1) = length & BYTE_MASK;
   for (i = 0; i < FF_DATA_LEN; i++) {
-    tx_message.byte(i + 2) = data[i];
+    tx_message.byte(i + 2) = data[g_frame_count][i];
   }
+  g_frame_count++;
   output(tx_message);
 }
 
@@ -116,17 +118,14 @@ void cantp_send_first_frame(message *tx_message, byte data[], dword length) {
  * @param offset : Current offset in the payload buffer.
  * @param seq : Sequence number of the current CF (0-15).
  */
-void cantp_send_consecutive_frame(message *tx_message, byte data[], dword offset, byte seq) {
+void cantp_send_consecutive_frame(message *tx_message, byte data[][], byte seq) {
   dword i, len;
-  len = (g_tx_length - offset > CF_DATA_LEN) ? CF_DATA_LEN : (g_tx_length - offset);
   tx_message.dlc = CAN_DLC;
   tx_message.byte(0) = FRAME_CF | (seq & LOW_NIBBLE_MASK);
-  for (i = 0; i < len; i++) {
-    tx_message.byte(i + 1) = data[offset + i];
+  for (i = 0; i < CAN_DLC; i++) {
+    tx_message.byte(i + 1) = data[g_frame_count][i];
   }
-  for (i = len + 1; i < CAN_DLC; i++) {
-    tx_message.byte(i) = PADDING;
-  }
+  g_frame_count++;
   g_cf_received++;
   output(tx_message);
 }
@@ -231,11 +230,7 @@ void cantp_process_flow_control_frame(message *rx_message)
   g_stmin_receive = rx_message.byte(2);
   
   if (g_fs_receive == FC_CTS) {
-    if (g_cf_offset < g_tx_length) {
-      setTimer(t_NCs, g_stmin_receive);
-    } else {
-      // Do nothing
-    }
+     setTimer(t_NCs, g_stmin_receive);
   } else if (g_fs_receive == FC_WAIT) {
     write("Receiver requested wait");
   } else if (g_fs_receive == FC_OVF) {
@@ -274,20 +269,15 @@ void cantp_rx_process_message(message *rx_message)
  */
 void cantp_handle_send_cf_on_stmin(message *tx_message)
 {
-  if (g_cf_offset < g_tx_length) {
-    cantp_send_consecutive_frame(tx_message, g_tx_buffer, g_cf_offset, g_seq_num);
-    g_cf_offset += CF_DATA_LEN;
-    g_seq_num = (g_seq_num + 1) % SEQ_NUM_MODULO;
-    
-    if (g_cf_offset >= g_tx_length) {
-      cantp_init();
-    } else if (g_bs_receive != 0 && (g_cf_received >= g_bs_receive)) {
-      g_cf_received = 0;
-    } else {
-      setTimer(t_NCs, g_stmin_receive);
-    }
-  } else {
+  cantp_send_consecutive_frame(tx_message, g_segmented_data_buffer, g_seq_num);
+  g_seq_num = (g_seq_num + 1) % SEQ_NUM_MODULO;
+  
+  if (g_frame_count > g_total_frames) {
     cantp_init();
+  } else if (g_bs_receive != 0 && (g_cf_received >= g_bs_receive)) {
+    g_cf_received = 0;
+  } else {
+    setTimer(t_NCs, g_stmin_receive);
   }
 }
 
@@ -310,13 +300,32 @@ void cantp_tx_send_message(message *tx_message)
   for (i = 0; i < g_tx_length; i++) {
     g_tx_buffer[i] = i % 255 + 1;
   }
-  
+    
   if (g_tx_length <= SF_MAX_DATA_LEN) {
     cantp_send_single_frame(tx_message, g_tx_buffer, g_tx_length);
   } else {
-    cantp_send_first_frame(tx_message, g_tx_buffer, g_tx_length);
+    segmented_data(g_tx_buffer);
+    cantp_send_first_frame(tx_message, g_segmented_data_buffer, g_tx_length);
   }
   write("ID 0x%03X sent %d bytes", tx_message.id,g_tx_length);
+}
+
+void segmented_data(byte data[]) {
+  int i,j;
+  for (i = 1; i < 6; ++i) {
+    g_segmented_data_buffer[0][i] = data[i];
+  }
+  g_total_frames = (g_tx_length - 6)/7 + 1;
+  for (i = 1; i < g_total_frames; ++i) {
+      for (j = 0; j < 7; ++j) {
+          int index;
+          index = i * 7 + j;
+          if (index < g_tx_length)
+              g_segmented_data_buffer[i][j] = data[index];
+          else
+              g_segmented_data_buffer[i][j] = 0x00; // padding n?u thi?u
+      }
+  }
 }
 
 on timer t_NCs
