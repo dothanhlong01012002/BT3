@@ -43,6 +43,11 @@ on sysvar PANEL2::sysvar_tx_length
   g_tx_length = @PANEL2::sysvar_tx_length;
 }
 
+on sysvar PANEL1::sysvar_PADDING
+{
+  g_padding_status = @PANEL1::sysvar_PADDING;
+}
+
 on sysvar PANEL2::sysvar_BS
 {
   int bs;

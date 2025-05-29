@@ -46,6 +46,7 @@ variables {
   dword g_fc_wait_sent;
   dword g_frame_count;
   dword g_total_frames;
+  dword g_padding_status = 0;
   
   // Parameter timers
   msTimer t_NBr;
@@ -80,14 +81,18 @@ void cantp_init() {
  */
 void cantp_send_single_frame(message *tx_message, byte data[], dword length) {
   dword i;
-  tx_message.dlc = CAN_DLC;
   tx_message.byte(0) = FRAME_SF | (length & LOW_NIBBLE_MASK);
   for (i = 0; i < length; i++) {
     tx_message.byte(i + 1) = data[i];
   }
-  for (i = length + 1; i < CAN_DLC; i++) {
-    tx_message.byte(i) = PADDING;
-  } 
+  if (g_padding_status) {
+    tx_message.dlc = CAN_DLC;
+    for (i = length + 1; i < CAN_DLC; i++) {
+      tx_message.byte(i) = PADDING;
+    } 
+  } else {
+    tx_message.dlc = length + 1;
+  }
   output(tx_message);
 }
 
@@ -120,10 +125,14 @@ void cantp_send_first_frame(message *tx_message, byte data[][], dword length) {
  */
 void cantp_send_consecutive_frame(message *tx_message, byte data[][], byte seq) {
   dword i, len;
-  tx_message.dlc = CAN_DLC;
   tx_message.byte(0) = FRAME_CF | (seq & LOW_NIBBLE_MASK);
-  for (i = 0; i < CAN_DLC; i++) {
+  for (i = 0; i < CF_DATA_LEN; i++) {
     tx_message.byte(i + 1) = data[g_frame_count][i];
+  }
+  if (g_frame_count == g_total_frames && g_padding_status == 0) {
+    tx_message.dlc = CAN_DLC - (g_frame_count*CF_DATA_LEN + FF_DATA_LEN - g_tx_length);
+  } else {
+    tx_message.dlc = CAN_DLC;
   }
   g_frame_count++;
   g_cf_received++;
@@ -140,13 +149,19 @@ void cantp_send_consecutive_frame(message *tx_message, byte data[][], byte seq) 
  */
 void cantp_send_flow_control_frame(message *tx_message, byte fs, byte bs, byte stmin) {
   dword i;
-  tx_message.dlc = CAN_DLC;
+
   tx_message.byte(0) = FRAME_FC | (fs & LOW_NIBBLE_MASK);
   tx_message.byte(1) = bs;
   tx_message.byte(2) = stmin;
-  for (i = 3; i < CAN_DLC; i++) {
-    tx_message.byte(i) = PADDING;
-  };
+
+  if (g_padding_status) {
+    tx_message.dlc = CAN_DLC;
+    for (i = 3; i < CAN_DLC; i++) {
+      tx_message.byte(i) = PADDING;
+    }; 
+  } else {
+    tx_message.dlc = 3;
+  }
   output(tx_message);
 }
 
@@ -310,20 +325,30 @@ void cantp_tx_send_message(message *tx_message)
   write("ID 0x%03X sent %d bytes", tx_message.id,g_tx_length);
 }
 
+/**
+ * @brief Segmented the message to transmit multi-frame
+ * 
+ * @param data : Full payload buffer.
+ */
 void segmented_data(byte data[]) {
   int i,j;
-  for (i = 1; i < 6; ++i) {
+  for (i = 0; i < FF_DATA_LEN; ++i) {
     g_segmented_data_buffer[0][i] = data[i];
   }
-  g_total_frames = (g_tx_length - 6)/7 + 1;
-  for (i = 1; i < g_total_frames; ++i) {
-      for (j = 0; j < 7; ++j) {
+  if ((g_tx_length - FF_DATA_LEN) % CF_DATA_LEN == 0) {
+    g_total_frames = (g_tx_length - FF_DATA_LEN)/CF_DATA_LEN; 
+  } else {
+    g_total_frames = (g_tx_length - FF_DATA_LEN)/CF_DATA_LEN + 1;
+  }
+
+  for (i = 1; i <= g_total_frames; ++i) {
+      for (j = 0; j < CF_DATA_LEN; ++j) {
           int index;
-          index = i * 7 + j;
+          index = i * CF_DATA_LEN + j - 1;
           if (index < g_tx_length)
               g_segmented_data_buffer[i][j] = data[index];
           else
-              g_segmented_data_buffer[i][j] = 0x00; // padding n?u thi?u
+              g_segmented_data_buffer[i][j] = PADDING;
       }
   }
 }
